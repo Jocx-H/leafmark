@@ -1,5 +1,7 @@
 # LeafMark
 
+[![CI](https://github.com/Jocx-H/leafmark/actions/workflows/ci.yml/badge.svg)](https://github.com/Jocx-H/leafmark/actions/workflows/ci.yml)
+
 **A focused, cross-platform naming manager for Markdown files.**
 
 LeafMark 是一个独立、功能聚焦的 Markdown 文档命名管理器。它不阅读、不编辑 Markdown 正文，只通过文件名管理编号、标签和标题，帮助大量笔记形成统一、可读、可排序的树形结构。
