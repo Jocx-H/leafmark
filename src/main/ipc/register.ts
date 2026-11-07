@@ -1,4 +1,4 @@
-import { ipcMain, type IpcMainInvokeEvent } from 'electron'
+import { app, ipcMain, type IpcMainInvokeEvent } from 'electron'
 import { ISSUE, LeafmarkError, toLeafmarkError } from '@shared/errors'
 import { IPC, type AppInfo, type Result } from '@shared/ipc-contracts'
 import type { AppState } from '../appState'
@@ -100,7 +100,7 @@ export function registerIpcHandlers(appState: AppState): void {
   })
   handle(IPC.resetConfig, () => appState.resetConfig())
   handle(IPC.getAppInfo, (): AppInfo => ({
-    appVersion: process.env.npm_package_version ?? '0.1.0',
+    appVersion: app.getVersion(),
     electronVersion: process.versions.electron ?? '',
     platform: process.platform,
     arch: process.arch

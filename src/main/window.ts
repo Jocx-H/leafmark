@@ -25,7 +25,7 @@ export function createMainWindow(): BrowserWindow {
     }
   })
 
-  window.setMenuBarVisibility(!isMac)
+  if (!isMac) window.setMenuBarVisibility(false)
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
 
   return window

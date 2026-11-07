@@ -11,6 +11,7 @@ import { hasValidCode, parseFilename } from '@shared/naming/parse'
 import { buildTagStats } from '@shared/tag-index'
 import type {
   CreateDocumentInput,
+  Notice,
   RenameInput,
   RenamePlanView,
   Snapshot,
@@ -69,6 +70,7 @@ export class WorkspaceSession {
   private readonly plans = new Map<string, StoredPlan>()
   private readonly undoStack: UndoEntry[] = []
   private readonly listeners = new Set<SnapshotListener>()
+  private readonly rootRealPath: string
   private readonly watcher: WorkspaceWatcher
   private watcherActive = false
   private recents: string[] = []
@@ -77,8 +79,11 @@ export class WorkspaceSession {
   private constructor(
     readonly rootPath: string,
     private configState: ConfigFileState,
-    private readonly watchChanges: boolean
+    private readonly watchChanges: boolean,
+    rootRealPath: string,
+    private readonly onNotice?: (notice: Notice) => void
   ) {
+    this.rootRealPath = rootRealPath
     this.watcher = new WorkspaceWatcher(rootPath, {
       onBatch: (paths, overflow) => this.handleWatchBatch(paths, overflow),
       onStatus: (active) => {
@@ -88,7 +93,10 @@ export class WorkspaceSession {
     })
   }
 
-  static async open(rootPath: string, options: { watch?: boolean } = {}): Promise<WorkspaceSession> {
+  static async open(
+    rootPath: string,
+    options: { watch?: boolean; onNotice?: (notice: Notice) => void } = {}
+  ): Promise<WorkspaceSession> {
     const resolved = path.resolve(rootPath)
     let stat: import('node:fs').Stats
     try {
@@ -105,7 +113,14 @@ export class WorkspaceSession {
     }
 
     const configState = await readConfigFile(resolved)
-    const session = new WorkspaceSession(resolved, configState, options.watch !== false)
+    const rootRealPath = await fs.realpath(resolved).catch(() => resolved)
+    const session = new WorkspaceSession(
+      resolved,
+      configState,
+      options.watch !== false,
+      rootRealPath,
+      options.onNotice
+    )
     await session.runScan(true)
     if (session.watchChanges) session.watcher.start()
     return session
@@ -301,6 +316,18 @@ export class WorkspaceSession {
     }
   }
 
+  /** Rejects rename targets whose directory resolves outside the workspace through a symlink. */
+  private async assertInsideRealRoot(directory: string): Promise<void> {
+    const real = await fs.realpath(directory).catch(() => null)
+    if (real === null) {
+      throw new LeafmarkError(ISSUE.ioFailed, '无法解析目标目录的真实路径')
+    }
+    const relative = path.relative(this.rootRealPath, real)
+    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+      throw new LeafmarkError(ISSUE.workspaceBoundary, '目标目录位于工作区之外（可能通过符号链接到达）')
+    }
+  }
+
   private assertWritable(): void {
     if (!this.isWritable) {
       throw new LeafmarkError(
@@ -349,6 +376,7 @@ export class WorkspaceSession {
     if (sourceStat.isSymbolicLink()) {
       throw new LeafmarkError(ISSUE.symlink, '符号链接不参与重命名')
     }
+    await this.assertInsideRealRoot(path.dirname(sourceAbsolute))
 
     const prepared = prepareMetadata({
       primaryCode: input.primaryCode,
@@ -495,6 +523,7 @@ export class WorkspaceSession {
       )
     }
 
+    await this.assertInsideRealRoot(path.dirname(targetAbsolute))
     await atomicRename(sourceAbsolute, targetAbsolute)
 
     this.removeDocument(view.sourceRelativePath)
@@ -695,7 +724,11 @@ export class WorkspaceSession {
       JSON.stringify(next.config) !== JSON.stringify(this.configState.config)
     this.configState = next
     this.plans.clear()
-    if (changed) await this.runScan(false)
-    else this.emit()
+    if (changed) {
+      this.onNotice?.({ kind: 'info', message: '检测到工作区配置文件变化，界面规则已更新' })
+      await this.runScan(false)
+    } else {
+      this.emit()
+    }
   }
 }

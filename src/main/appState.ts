@@ -100,7 +100,9 @@ export class AppState {
     }
     this.opening = true
     try {
-      const next = await WorkspaceSession.open(rootPath)
+      const next = await WorkspaceSession.open(rootPath, {
+        onNotice: (notice) => this.notify(notice)
+      })
       const previous = this.session
       this.unsubscribe?.()
       this.session = next

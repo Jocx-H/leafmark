@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ISSUE, LeafmarkError } from '@shared/errors'
@@ -176,6 +177,25 @@ describe('rename flow', () => {
     await expect(session.commitRename(plan.id)).rejects.toMatchObject({ code: ISSUE.planUnknown })
   })
 
+  it('resolves a conflict by assigning a free sequence', async () => {
+    const { session } = await setup({
+      '010100_a.md': 'a',
+      'sub/010100_b.md': 'b'
+    })
+    const plan = await session.previewRename({
+      sourceRelativePath: '010100_a.md',
+      primaryCode: '01',
+      secondaryCode: '01',
+      sequenceCode: '01',
+      tags: [],
+      title: 'a'
+    })
+    expect(plan.errors).toEqual([])
+    await session.commitRename(plan.id)
+    const statuses = session.snapshot().documents.map((document) => document.status)
+    expect(statuses).toEqual(['valid', 'valid'])
+  })
+
   it('reports both files when two documents share a code', async () => {
     const { session } = await setup({
       '010100_a.md': 'a',
@@ -187,6 +207,46 @@ describe('rename flow', () => {
     expect(first?.status).toBe('conflict')
     expect(second?.status).toBe('conflict')
     expect(first?.conflictsWith).toEqual(['sub/010100_b.md'])
+  })
+})
+
+describe('workspace boundary', () => {
+  it('refuses to rename through a directory symlink that leaves the workspace', async () => {
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'leafmark-outside-'))
+    await fs.writeFile(path.join(outside, '010100_a.md'), 'outside', 'utf8')
+    try {
+      const config = {
+        schemaVersion: 1,
+        scan: {
+          recursive: true,
+          extensions: ['.md'],
+          followSymlinks: true,
+          ignoreGlobs: []
+        }
+      }
+      const workspaceLocal = await createTempWorkspace({}, { config })
+      workspace = workspaceLocal
+      try {
+        await fs.symlink(outside, path.join(workspaceLocal.root, 'link'), 'dir')
+      } catch {
+        return
+      }
+      session = await WorkspaceSession.open(workspaceLocal.root, { watch: false })
+      const document = session.snapshot().documents.find((item) => item.filename === '010100_a.md')
+      expect(document).toBeTruthy()
+      await expect(
+        session.previewRename({
+          sourceRelativePath: document?.relativePath ?? 'link/010100_a.md',
+          primaryCode: '01',
+          secondaryCode: '01',
+          sequenceCode: '00',
+          tags: [],
+          title: 'b'
+        })
+      ).rejects.toMatchObject({ code: ISSUE.workspaceBoundary })
+    } finally {
+      await fs.rm(outside, { recursive: true, force: true })
+    }
   })
 })
 
