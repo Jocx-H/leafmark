@@ -1,0 +1,29 @@
+appId: app.leafmark.desktop
+productName: LeafMark
+copyright: Copyright © 2026 LeafMark contributors
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+  - '!**/*.map'
+asar: true
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+mac:
+  category: public.app-category.productivity
+  icon: build/icon.png
+  identity: null
+  target:
+    - dmg
+    - zip
+win:
+  icon: build/icon.png
+  target:
+    - nsis
+    - zip
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false

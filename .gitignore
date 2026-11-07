@@ -1,0 +1,12 @@
+node_modules/
+out/
+release/
+dist/
+coverage/
+*.log
+*.tsbuildinfo
+.DS_Store
+.vite/
+
+# Electron single-instance files
+Singleton*
