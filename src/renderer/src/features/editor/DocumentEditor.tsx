@@ -3,6 +3,7 @@ import type { DocumentRecord } from '@shared/model'
 import type { RenamePlanView, Snapshot } from '@shared/ipc-contracts'
 import { recommendSequence } from '@shared/naming/allocate'
 import { prepareMetadata } from '@shared/naming/prepare'
+import { extractLeadingTags } from '@shared/naming/tag-extract'
 import { Modal } from '../../components/Modal'
 import { NamingFields, type NamingDraft } from '../../components/NamingFields'
 import { StatusBadge } from '../../components/StatusBadge'
@@ -39,12 +40,13 @@ function initialDraft(document: DocumentRecord, snapshot: Snapshot): NamingDraft
   const primaryCode = options.primaries[0]?.code ?? '00'
   const secondaryCode = (options.secondaries.get(primaryCode) ?? [])[0]?.code ?? '00'
   const allocation = recommendSequence(usedSequences(snapshot.documents, primaryCode, secondaryCode))
+  const extracted = extractLeadingTags(documentTitle(document))
   return {
     primaryCode,
     secondaryCode,
     sequenceCode: allocation.kind === 'assigned' ? allocation.sequence : '',
-    tags: [],
-    title: documentTitle(document)
+    tags: extracted.tags,
+    title: extracted.title
   }
 }
 
@@ -78,7 +80,8 @@ export function DocumentEditor({
   const planIdRef = useRef<string | null>(null)
 
   const isUnmanaged = document.status === 'unmanaged'
-  const dirty = isUnmanaged || !sameDraft(draft, initial)
+  const needsRepair = document.status !== 'valid'
+  const dirty = needsRepair || !sameDraft(draft, initial)
   const writable = snapshot.workspace?.writable !== false
   const draftSignature = JSON.stringify(draft)
 
@@ -132,8 +135,9 @@ export function DocumentEditor({
 
   const prepared = prepareMetadata(draft)
   const localIssues = plan ? [...plan.errors, ...plan.warnings] : prepared.issues
+  const planMatchesDraft = plan !== null && plan.targetFilename === prepared.filename
   const canCommit =
-    writable && plan !== null && plan.errors.length === 0 && !previewing && !committing
+    writable && plan !== null && plan.errors.length === 0 && !previewing && !committing && planMatchesDraft
 
   const reset = (): void => {
     const next = initialDraft(document, snapshot)
@@ -161,7 +165,7 @@ export function DocumentEditor({
   }
 
   const beginCommit = (): void => {
-    if (!plan) return
+    if (!plan || plan.targetFilename !== prepared.filename) return
     if (snapshot.config.behavior.confirmBeforeRename) setConfirming(true)
     else void performCommit()
   }

@@ -37,7 +37,8 @@ const FILES = {
   'archive/020100_[课程]_并行计算复习.md': '# 并行计算\n',
   '010301_[重复编号]_冲突文件A.md': '# conflict\n',
   '010301_[重复编号]_冲突文件B.md': '# conflict\n',
-  '01030_编号异常.md': '# invalid\n'
+  '01030_编号异常.md': '# invalid\n',
+  '[GPU]使用CUDAGraph.md': '# GPU\n'
 }
 
 async function createFixture() {
@@ -92,8 +93,30 @@ async function main() {
   })
 
   const rows = await page.locator('[data-testid="doc-row"]').count()
-  assert(rows === 9, `expected 9 rows, got ${rows}`)
+  assert(rows === 10, `expected 10 rows, got ${rows}`)
   await page.screenshot({ path: path.join(shotsDir, '01-overview.png') })
+
+  // ---- leading tags are extracted when adopting an existing file --------
+  await page.locator('[data-testid="doc-row"]', { hasText: '使用CUDAGraph' }).click()
+  await page.waitForSelector('[data-testid="title-input"]')
+  const adoptedTitle = await page.getByTestId('title-input').inputValue()
+  assert(adoptedTitle === '使用CUDAGraph', `leading tag was not extracted, title=${adoptedTitle}`)
+  await page.locator('.tag-chip-label', { hasText: 'GPU' }).waitFor({ timeout: 5_000 })
+  await page.screenshot({ path: path.join(shotsDir, '02-tag-extract.png') })
+
+  // blurring the title extracts freshly typed leading tags
+  await page.getByTestId('title-input').fill('[CUDA]GPU 使用说明')
+  await page.locator('.editor-title').click()
+  await page.waitForFunction(
+    () => {
+      const input = document.querySelector('[data-testid="title-input"]')
+      return input instanceof HTMLInputElement && input.value === 'GPU 使用说明'
+    },
+    null,
+    { timeout: 5_000 }
+  )
+  const chipLabels = await page.locator('.tag-chip-label').allTextContents()
+  assert(chipLabels.includes('GPU') && chipLabels.includes('CUDA'), 'title blur did not extract tags')
 
   // ---- rename a valid document through the editor -----------------------
   await page.locator('[data-testid="doc-row"]', { hasText: 'MMA指令说明' }).click()
@@ -150,7 +173,7 @@ async function main() {
   await page.getByRole('button', { name: '未纳入管理' }).click()
   await page.waitForTimeout(200)
   const unmanagedRows = await page.locator('[data-testid="doc-row"]').count()
-  assert(unmanagedRows === 1, `expected one unmanaged row, got ${unmanagedRows}`)
+  assert(unmanagedRows === 2, `expected two unmanaged rows, got ${unmanagedRows}`)
 
   // ---- conflict view ----------------------------------------------------
   await page.getByRole('button', { name: '编号冲突' }).click()

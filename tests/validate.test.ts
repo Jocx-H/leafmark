@@ -45,29 +45,29 @@ describe('validateTag', () => {
 
 describe('validateTitle', () => {
   it('trims a title', () => {
-    expect(validateTitle('  标题  ', false).value).toBe('标题')
+    expect(validateTitle('  标题  ').value).toBe('标题')
   })
 
   it('rejects an empty title', () => {
-    expect(validateTitle('  ', false).issues.map((item) => item.code)).toContain(ISSUE.titleEmpty)
+    expect(validateTitle('  ').issues.map((item) => item.code)).toContain(ISSUE.titleEmpty)
   })
 
   it('rejects forbidden characters', () => {
-    expect(validateTitle('a/b', false).issues.map((item) => item.code)).toContain(ISSUE.titleForbiddenChar)
-    expect(validateTitle('a|b', false).issues.map((item) => item.code)).toContain(ISSUE.titleForbiddenChar)
+    expect(validateTitle('a/b').issues.map((item) => item.code)).toContain(ISSUE.titleForbiddenChar)
+    expect(validateTitle('a|b').issues.map((item) => item.code)).toContain(ISSUE.titleForbiddenChar)
   })
 
   it('rejects a trailing period', () => {
-    expect(validateTitle('标题.', false).issues.map((item) => item.code)).toContain(ISSUE.titleTrailing)
+    expect(validateTitle('标题.').issues.map((item) => item.code)).toContain(ISSUE.titleTrailing)
   })
 
-  it('rejects a leading bracket only when the document has no tags', () => {
-    expect(validateTitle('[标题]', false).issues.map((item) => item.code)).toContain(ISSUE.titleLeadingBracket)
-    expect(validateTitle('[标题]', true).issues).toEqual([])
+  it('rejects a leading bracket because it would be parsed as a tag', () => {
+    expect(validateTitle('[标题]').issues.map((item) => item.code)).toContain(ISSUE.titleLeadingBracket)
+    expect(validateTitle('[标签]正文').issues.map((item) => item.code)).toContain(ISSUE.titleLeadingBracket)
   })
 
   it('allows brackets inside the title', () => {
-    expect(validateTitle('标题[补充]', true).issues).toEqual([])
+    expect(validateTitle('标题[补充]').issues).toEqual([])
   })
 })
 

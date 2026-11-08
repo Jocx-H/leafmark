@@ -42,7 +42,7 @@ export function prepareMetadata(draft: MetadataDraft): PreparedMetadata {
     tags.push(validated.value)
   }
 
-  const title = validateTitle(String(draft.title ?? ''), tags.length > 0)
+  const title = validateTitle(String(draft.title ?? ''))
   issues.push(...title.issues)
 
   const code = `${draft.primaryCode}${draft.secondaryCode}${draft.sequenceCode}`

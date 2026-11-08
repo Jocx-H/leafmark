@@ -49,10 +49,18 @@ describe('parseFilename', () => {
     expect(parsed.issues[0]?.severity).toBe('warning')
   })
 
-  it('requires a separator after the tag block', () => {
+  it('requires a separator after the tag block but still recovers the title', () => {
     const parsed = parseFilename('010203_[CUDA]标题.md')
     expect(issueCodes(parsed)).toContain(ISSUE.tagBlockSeparator)
-    expect(parsed.title).toBeNull()
+    expect(parsed.tags).toEqual(['CUDA'])
+    expect(parsed.title).toBe('标题')
+  })
+
+  it('recovers tags and title when several tags lack the separator', () => {
+    const parsed = parseFilename('010203_[CUDA][SpMM]标题.md')
+    expect(issueCodes(parsed)).toContain(ISSUE.tagBlockSeparator)
+    expect(parsed.tags).toEqual(['CUDA', 'SpMM'])
+    expect(parsed.title).toBe('标题')
   })
 
   it('rejects an empty tag', () => {

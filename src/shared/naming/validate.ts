@@ -93,9 +93,12 @@ export interface ValidatedTitle {
 
 /**
  * Validates and normalizes a document title.
- * `hasTags` decides whether a leading `[` is ambiguous.
+ *
+ * A leading `[` is always rejected: the filename format would parse it as another
+ * tag block, so the document would silently change after a rescan. Valid leading
+ * `[tag]` groups are extracted into tags by the editor before validation.
  */
-export function validateTitle(raw: string, hasTags: boolean): ValidatedTitle {
+export function validateTitle(raw: string): ValidatedTitle {
   const value = normalizeNfc(raw).trim()
   const issues: Issue[] = []
 
@@ -115,9 +118,9 @@ export function validateTitle(raw: string, hasTags: boolean): ValidatedTitle {
     issues.push(issue(ISSUE.titleTrailing, '标题不能以句点结尾', 'error', 'title'))
   }
 
-  if (!hasTags && value.startsWith('[')) {
+  if (value.startsWith('[')) {
     issues.push(
-      issue(ISSUE.titleLeadingBracket, '无标签标题不能以 “[” 开头，请改用标签或调整标题', 'error', 'title')
+      issue(ISSUE.titleLeadingBracket, '标题不能以 “[” 开头，开头方括号会被识别为标签', 'error', 'title')
     )
   }
 

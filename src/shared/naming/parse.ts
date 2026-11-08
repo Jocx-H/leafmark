@@ -110,13 +110,14 @@ export function parseFilename(input: string, options: ParseOptions = {}): Parsed
 
   if (cursor.startsWith('[')) {
     const collected: string[] = []
-    let tagBlockFailed = false
+    let unclosed = false
+    let separatorFound = false
 
     while (cursor.startsWith('[')) {
       const close = cursor.indexOf(']')
       if (close === -1) {
         issues.push(issue(ISSUE.tagUnclosed, '标签缺少右方括号 “]”', 'error', 'tags'))
-        tagBlockFailed = true
+        unclosed = true
         break
       }
 
@@ -129,26 +130,29 @@ export function parseFilename(input: string, options: ParseOptions = {}): Parsed
       if (cursor.startsWith('[')) continue
       if (cursor.startsWith('_')) {
         cursor = cursor.slice(1)
+        separatorFound = true
       } else {
         issues.push(issue(ISSUE.tagBlockSeparator, '标签块后必须紧跟一个下划线 “_”', 'error', 'tags'))
-        tagBlockFailed = true
       }
       break
     }
 
-    if (!tagBlockFailed) {
-      const seen = new Set<string>()
-      const deduped: string[] = []
-      for (const tag of collected) {
-        const key = tag.toLowerCase()
-        if (seen.has(key)) {
-          issues.push(issue(ISSUE.tagDuplicate, `同一文件内标签重复：“${tag}”`, 'error', 'tags'))
-          continue
-        }
-        seen.add(key)
-        deduped.push(tag)
+    const seen = new Set<string>()
+    const deduped: string[] = []
+    for (const tag of collected) {
+      const key = tag.toLowerCase()
+      if (seen.has(key)) {
+        issues.push(issue(ISSUE.tagDuplicate, `同一文件内标签重复：“${tag}”`, 'error', 'tags'))
+        continue
       }
-      parsed.tags = deduped
+      seen.add(key)
+      deduped.push(tag)
+    }
+    parsed.tags = deduped
+
+    // Recover the title even when the `_` separator is missing so the editor can
+    // prefill a ready-to-fix name; only an unclosed tag block leaves it unknown.
+    if (!unclosed && (separatorFound || cursor.length > 0)) {
       titleRaw = cursor
     }
   } else {
@@ -156,7 +160,7 @@ export function parseFilename(input: string, options: ParseOptions = {}): Parsed
   }
 
   if (titleRaw !== null) {
-    const validatedTitle = validateTitle(titleRaw, parsed.tags.length > 0)
+    const validatedTitle = validateTitle(titleRaw)
     parsed.title = validatedTitle.value.length > 0 ? validatedTitle.value : null
     issues.push(...validatedTitle.issues)
   }

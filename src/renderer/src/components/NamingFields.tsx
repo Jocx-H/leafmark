@@ -3,6 +3,7 @@ import type { Snapshot } from '@shared/ipc-contracts'
 import { prepareMetadata } from '@shared/naming/prepare'
 import { utf8ByteLength } from '@shared/naming/validate'
 import { TagEditor } from './TagEditor'
+import { extractLeadingTags } from '@shared/naming/tag-extract'
 import { recommendSequence } from '@shared/naming/allocate'
 import {
   buildCategoryOptions,
@@ -97,6 +98,29 @@ export function NamingFields({
     onChange({ ...draft, sequenceCode: allocation.sequence })
   }
 
+  const mergeExtractedTags = (additions: string[]): string[] => {
+    const tags = [...draft.tags]
+    for (const tag of additions) {
+      if (!tags.some((item) => item.toLowerCase() === tag.toLowerCase())) tags.push(tag)
+    }
+    return tags
+  }
+
+  const handleTitleChange = (value: string): void => {
+    const extracted = extractLeadingTags(value)
+    if (extracted.extracted) {
+      onChange({ ...draft, tags: mergeExtractedTags(extracted.tags), title: extracted.title })
+      return
+    }
+    onChange({ ...draft, title: value })
+  }
+
+  const extractTagsFromTitle = (): void => {
+    const extracted = extractLeadingTags(draft.title)
+    if (!extracted.extracted) return
+    onChange({ ...draft, tags: mergeExtractedTags(extracted.tags), title: extracted.title })
+  }
+
   return (
     <div className="naming-fields">
       <div className="field-row">
@@ -181,7 +205,8 @@ export function NamingFields({
         <input
           className="text-input"
           value={draft.title}
-          onChange={(event) => onChange({ ...draft, title: event.target.value })}
+          onChange={(event) => handleTitleChange(event.target.value)}
+          onBlur={extractTagsFromTitle}
           placeholder="例如：稀疏矩阵乘优化"
           disabled={disabled}
           autoFocus={titleAutoFocus}
