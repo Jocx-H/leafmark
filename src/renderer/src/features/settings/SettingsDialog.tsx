@@ -28,7 +28,9 @@ export function SettingsDialog({ snapshot, onClose, onSaved, notify }: SettingsD
   const [addingChildFor, setAddingChildFor] = useState<string | null>(null)
   const [newChildCode, setNewChildCode] = useState('00')
   const [newChildName, setNewChildName] = useState('')
-  const [collapsedPrimaries, setCollapsedPrimaries] = useState<Set<string>>(new Set())
+  const [collapsedPrimaries, setCollapsedPrimaries] = useState<Set<string>>(
+    () => new Set(Object.keys(snapshot.config.categories))
+  )
 
   const validation = useMemo(() => validateConfig(config), [config])
   const errors = validation.issues.filter((item) => item.severity === 'error')

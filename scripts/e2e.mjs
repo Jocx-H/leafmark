@@ -166,8 +166,10 @@ async function main() {
   const researchCard = page
     .locator('.category-card')
     .filter({ has: page.locator('.code-pill', { hasText: /^01$/ }) })
-  await researchCard.locator('.category-toggle').click()
-  assert((await researchCard.locator('.category-row.is-child').count()) === 0, 'children did not collapse')
+  assert(
+    (await researchCard.locator('.category-row.is-child').count()) === 0,
+    'categories should be collapsed by default'
+  )
   assert(
     ((await researchCard.locator('.category-summary').textContent()) ?? '').includes('2 个二级分类'),
     'collapsed summary is missing'
@@ -181,6 +183,7 @@ async function main() {
   const emptyCategory = page
     .locator('.category-card')
     .filter({ has: page.locator('.code-pill', { hasText: /^03$/ }) })
+  await emptyCategory.locator('.category-toggle').click()
   await emptyCategory.getByRole('button', { name: '+ 添加二级分类' }).click()
   await emptyCategory.getByLabel('新二级分类编号').selectOption('00')
   await emptyCategory.getByLabel('新二级分类名称').fill('新子类')
