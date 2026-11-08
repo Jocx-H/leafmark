@@ -493,9 +493,13 @@ body[data-platform="darwin"] .topbar {
 
 .tree-caret {
   width: 10px;
+  height: 10px;
   color: var(--muted-soft);
-  font-size: 9px;
-  transform: translateY(1px);
+  transition: transform 0.12s ease;
+}
+
+.tree-caret.is-collapsed {
+  transform: rotate(-90deg);
 }
 
 .tree-children {
@@ -2106,4 +2110,62 @@ body[data-platform="darwin"] .topbar {
 
 .insert-hint.is-warn {
   color: var(--warn);
+}
+
+/* ---------------------------------------------------------------- collapsible categories */
+
+.category-toggle {
+  flex: 0 0 22px;
+  width: 22px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.category-toggle:hover {
+  background: var(--panel-muted);
+}
+
+.category-summary {
+  flex: 0 0 auto;
+  margin-right: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.tree-primary-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.tree-toggle {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 27px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted-soft);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.tree-toggle:hover {
+  background: rgba(29, 33, 30, 0.06);
+  color: var(--ink-soft);
+}
+
+.tree-primary {
+  flex: 1;
+  min-width: 0;
 }

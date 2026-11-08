@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { Snapshot } from '@shared/ipc-contracts'
 import type { ViewKey } from '../../utils/documents'
 import { buildCategoryTree, formatTimestamp, viewCounts } from '../../utils/documents'
@@ -12,8 +12,22 @@ interface SidebarProps {
 export function Sidebar({ snapshot, view, onSelectView }: SidebarProps): ReactNode {
   const tree = useMemo(() => buildCategoryTree(snapshot.config, snapshot.documents), [snapshot.config, snapshot.documents])
   const counts = viewCounts(snapshot.documents)
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    setCollapsed(new Set())
+  }, [snapshot.workspace?.rootPath])
 
   const itemClass = (key: ViewKey): string => (view === key ? 'side-item is-active' : 'side-item')
+
+  const togglePrimary = (code: string): void => {
+    setCollapsed((current) => {
+      const next = new Set(current)
+      if (next.has(code)) next.delete(code)
+      else next.add(code)
+      return next
+    })
+  }
 
   return (
     <aside className="sidebar">
@@ -40,34 +54,64 @@ export function Sidebar({ snapshot, view, onSelectView }: SidebarProps): ReactNo
         <div className="side-heading">分类</div>
         <nav className="tree" aria-label="分类树">
           {tree.length === 0 ? <p className="side-empty">尚未配置分类</p> : null}
-          {tree.map((primary) => (
-            <div className="tree-group" key={primary.code}>
-              <button
-                type="button"
-                className={`${itemClass(`cat:${primary.code}`)} tree-primary`}
-                onClick={() => onSelectView(`cat:${primary.code}`)}
-              >
-                <span className="tree-caret">▾</span>
-                <span className="tree-name">{primary.name}</span>
-                <span className="tree-code">{primary.code}</span>
-                <span className="side-count">{primary.count}</span>
-              </button>
-              <div className="tree-children">
-                {primary.children.map((child) => (
+          {tree.map((primary) => {
+            const isCollapsed = collapsed.has(primary.code)
+            return (
+              <div className="tree-group" key={primary.code}>
+                <div className="tree-primary-row">
                   <button
                     type="button"
-                    key={child.code}
-                    className={`${itemClass(`cat:${primary.code}:${child.code}`)} tree-child`}
-                    onClick={() => onSelectView(`cat:${primary.code}:${child.code}`)}
+                    className="tree-toggle"
+                    aria-label={`${isCollapsed ? '展开' : '折叠'}一级分类 ${primary.name}`}
+                    aria-expanded={!isCollapsed}
+                    onClick={() => togglePrimary(primary.code)}
                   >
-                    <span className="tree-name">{child.name}</span>
-                    <span className="tree-code">{child.code}</span>
-                    <span className="side-count">{child.count}</span>
+                    <svg
+                      className={isCollapsed ? 'tree-caret is-collapsed' : 'tree-caret'}
+                      width="10"
+                      height="10"
+                      viewBox="0 0 10 10"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M2 3.5 5 6.5 8 3.5"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.4"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
                   </button>
-                ))}
+                  <button
+                    type="button"
+                    className={`${itemClass(`cat:${primary.code}`)} tree-primary`}
+                    onClick={() => onSelectView(`cat:${primary.code}`)}
+                  >
+                    <span className="tree-name">{primary.name}</span>
+                    <span className="tree-code">{primary.code}</span>
+                    <span className="side-count">{primary.count}</span>
+                  </button>
+                </div>
+                {isCollapsed ? null : (
+                  <div className="tree-children">
+                    {primary.children.map((child) => (
+                      <button
+                        type="button"
+                        key={child.code}
+                        className={`${itemClass(`cat:${primary.code}:${child.code}`)} tree-child`}
+                        onClick={() => onSelectView(`cat:${primary.code}:${child.code}`)}
+                      >
+                        <span className="tree-name">{child.name}</span>
+                        <span className="tree-code">{child.code}</span>
+                        <span className="side-count">{child.count}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            )
+          })}
         </nav>
       </div>
 

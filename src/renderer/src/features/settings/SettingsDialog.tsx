@@ -28,6 +28,7 @@ export function SettingsDialog({ snapshot, onClose, onSaved, notify }: SettingsD
   const [addingChildFor, setAddingChildFor] = useState<string | null>(null)
   const [newChildCode, setNewChildCode] = useState('00')
   const [newChildName, setNewChildName] = useState('')
+  const [collapsedPrimaries, setCollapsedPrimaries] = useState<Set<string>>(new Set())
 
   const validation = useMemo(() => validateConfig(config), [config])
   const errors = validation.issues.filter((item) => item.severity === 'error')
@@ -59,12 +60,26 @@ export function SettingsDialog({ snapshot, onClose, onSaved, notify }: SettingsD
       return
     }
     setCategories({ ...config.categories, [code]: { name: '新分类', children: { '00': '未分类' } } })
+    setCollapsedPrimaries((current) => {
+      const next = new Set(current)
+      next.delete(code)
+      return next
+    })
   }
 
   const removePrimary = (code: string): void => {
     const next = { ...config.categories }
     delete next[code]
     setCategories(next)
+  }
+
+  const togglePrimary = (code: string): void => {
+    setCollapsedPrimaries((current) => {
+      const next = new Set(current)
+      if (next.has(code)) next.delete(code)
+      else next.add(code)
+      return next
+    })
   }
 
   const insertPreview = useMemo(() => {
@@ -214,9 +229,35 @@ export function SettingsDialog({ snapshot, onClose, onSaved, notify }: SettingsD
         <div className="category-list">
           {Object.entries(config.categories)
             .sort(([left], [right]) => left.localeCompare(right))
-            .map(([code, node]) => (
+            .map(([code, node]) => {
+              const isCollapsed = collapsedPrimaries.has(code)
+              return (
               <div className="category-card" key={code}>
                 <div className="category-row">
+                  <button
+                    type="button"
+                    className="category-toggle"
+                    aria-label={`${isCollapsed ? '展开' : '折叠'}一级分类 ${node.name}`}
+                    aria-expanded={!isCollapsed}
+                    onClick={() => togglePrimary(code)}
+                  >
+                    <svg
+                      className={isCollapsed ? 'tree-caret is-collapsed' : 'tree-caret'}
+                      width="10"
+                      height="10"
+                      viewBox="0 0 10 10"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M2 3.5 5 6.5 8 3.5"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.4"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </button>
                   <span className="code-pill">{code}</span>
                   <input
                     className="text-input"
@@ -225,6 +266,9 @@ export function SettingsDialog({ snapshot, onClose, onSaved, notify }: SettingsD
                     aria-label={`一级分类 ${code} 名称`}
                     disabled={busy}
                   />
+                  {isCollapsed ? (
+                    <span className="category-summary">{Object.keys(node.children).length} 个二级分类</span>
+                  ) : null}
                   <button
                     type="button"
                     className="icon-button"
@@ -235,6 +279,7 @@ export function SettingsDialog({ snapshot, onClose, onSaved, notify }: SettingsD
                     ×
                   </button>
                 </div>
+                {isCollapsed ? null : (
                 <div className="category-children">
                   {Object.entries(node.children)
                     .sort(([left], [right]) => left.localeCompare(right))
@@ -333,8 +378,10 @@ export function SettingsDialog({ snapshot, onClose, onSaved, notify }: SettingsD
                     </button>
                   )}
                 </div>
+                )}
               </div>
-            ))}
+              )
+            })}
           {Object.keys(config.categories).length === 0 ? (
             <p className="settings-empty">还没有分类，重命名时仍可使用未配置的编号。</p>
           ) : null}

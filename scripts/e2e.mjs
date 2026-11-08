@@ -162,6 +162,19 @@ async function main() {
   await page.getByTestId('settings').click()
   await page.waitForSelector('.modal')
   await page.screenshot({ path: path.join(shotsDir, '05-settings.png') })
+  // collapsing and expanding a primary category in the settings
+  const researchCard = page
+    .locator('.category-card')
+    .filter({ has: page.locator('.code-pill', { hasText: /^01$/ }) })
+  await researchCard.locator('.category-toggle').click()
+  assert((await researchCard.locator('.category-row.is-child').count()) === 0, 'children did not collapse')
+  assert(
+    ((await researchCard.locator('.category-summary').textContent()) ?? '').includes('2 个二级分类'),
+    'collapsed summary is missing'
+  )
+  await researchCard.locator('.category-toggle').click()
+  assert((await researchCard.locator('.category-row.is-child').count()) === 2, 'children did not expand')
+
   await page.getByLabel('一级分类 02 名称').fill('课程资料')
 
   // inserting at 00 shifts the existing child to 01 without touching documents
@@ -186,6 +199,16 @@ async function main() {
   assert(savedConfig.categories['03'].children['01'] === '子类', 'existing child was not shifted')
 
   await page.screenshot({ path: path.join(shotsDir, '06-final.png') })
+
+  // ---- collapsible category tree in the sidebar ------------------------
+  const researchGroup = page
+    .locator('.tree-group')
+    .filter({ has: page.locator('.tree-primary', { hasText: '科研' }) })
+  await researchGroup.locator('.tree-toggle').click()
+  assert((await researchGroup.locator('.tree-children').count()) === 0, 'sidebar children did not collapse')
+  await page.screenshot({ path: path.join(shotsDir, '07-sidebar-collapsed.png') })
+  await researchGroup.locator('.tree-toggle').click()
+  assert((await researchGroup.locator('.tree-children').count()) === 1, 'sidebar children did not expand')
 
   // ---- unmanaged view stays readable -----------------------------------
   await page.getByRole('button', { name: '未纳入管理' }).click()
