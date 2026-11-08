@@ -21,7 +21,8 @@ const CONFIG = {
   categories: {
     '00': { name: '未分类', children: { '00': '未分类' } },
     '01': { name: '科研', children: { '01': '论文阅读', '02': '实验记录' } },
-    '02': { name: '课程', children: { '01': '课程笔记' } }
+    '02': { name: '课程', children: { '01': '课程笔记' } },
+    '03': { name: '空分类', children: { '00': '子类' } }
   },
   pinnedTags: ['LLM', 'CUDA'],
   behavior: { confirmBeforeRename: true, warnAboutLinks: true }
@@ -162,10 +163,27 @@ async function main() {
   await page.waitForSelector('.modal')
   await page.screenshot({ path: path.join(shotsDir, '05-settings.png') })
   await page.getByLabel('一级分类 02 名称').fill('课程资料')
+
+  // inserting at 00 shifts the existing child to 01 without touching documents
+  const emptyCategory = page
+    .locator('.category-card')
+    .filter({ has: page.locator('.code-pill', { hasText: /^03$/ }) })
+  await emptyCategory.getByRole('button', { name: '+ 添加二级分类' }).click()
+  await emptyCategory.getByLabel('新二级分类编号').selectOption('00')
+  await emptyCategory.getByLabel('新二级分类名称').fill('新子类')
+  await emptyCategory.getByRole('button', { name: '添加', exact: true }).click()
+  await page.waitForTimeout(300)
+  const insertedChildren = await emptyCategory
+    .locator('.category-row.is-child input')
+    .evaluateAll((inputs) => inputs.map((input) => input.value))
+  assert(insertedChildren.includes('新子类'), `inserted category missing: ${insertedChildren.join(',')}`)
+
   await page.getByRole('button', { name: '保存设置' }).click()
   await page.getByText('课程资料').first().waitFor({ timeout: 15_000 })
   const savedConfig = JSON.parse(await fs.readFile(path.join(workspace, '.leafmark.json'), 'utf8'))
   assert(savedConfig.categories['02'].name === '课程资料', 'config was not persisted')
+  assert(savedConfig.categories['03'].children['00'] === '新子类', 'inserted category is missing')
+  assert(savedConfig.categories['03'].children['01'] === '子类', 'existing child was not shifted')
 
   await page.screenshot({ path: path.join(shotsDir, '06-final.png') })
 

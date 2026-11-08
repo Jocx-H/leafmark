@@ -2071,3 +2071,39 @@ body[data-platform="darwin"] .topbar {
     width: 352px;
   }
 }
+
+/* ---------------------------------------------------------------- insert child */
+
+.insert-child {
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.insert-child-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.insert-code {
+  flex: 0 0 168px;
+}
+
+.insert-child-row .text-input {
+  flex: 1;
+  min-width: 120px;
+}
+
+.insert-hint {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.insert-hint.is-warn {
+  color: var(--warn);
+}

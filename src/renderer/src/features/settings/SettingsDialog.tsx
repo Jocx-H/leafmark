@@ -3,6 +3,7 @@ import type { Snapshot } from '@shared/ipc-contracts'
 import type { CategoryNode, LeafmarkConfig } from '@shared/config/types'
 import { cloneConfig } from '@shared/config/types'
 import { validateConfig } from '@shared/config/validate'
+import { insertChildCategory } from '@shared/config/categories'
 import { TagEditor } from '../../components/TagEditor'
 import { Modal } from '../../components/Modal'
 
@@ -24,6 +25,9 @@ export function SettingsDialog({ snapshot, onClose, onSaved, notify }: SettingsD
   const [config, setConfig] = useState<LeafmarkConfig>(() => cloneConfig(snapshot.config))
   const [busy, setBusy] = useState(false)
   const [resetConfirm, setResetConfirm] = useState(false)
+  const [addingChildFor, setAddingChildFor] = useState<string | null>(null)
+  const [newChildCode, setNewChildCode] = useState('00')
+  const [newChildName, setNewChildName] = useState('')
 
   const validation = useMemo(() => validateConfig(config), [config])
   const errors = validation.issues.filter((item) => item.severity === 'error')
@@ -63,7 +67,25 @@ export function SettingsDialog({ snapshot, onClose, onSaved, notify }: SettingsD
     setCategories(next)
   }
 
-  const addChild = (primary: string): void => {
+  const insertPreview = useMemo(() => {
+    if (addingChildFor === null) return null
+    const node = config.categories[addingChildFor]
+    if (!node) return null
+    return insertChildCategory(node.children, newChildCode, newChildName)
+  }, [addingChildFor, config.categories, newChildCode, newChildName])
+
+  const shiftedDocuments = useMemo(() => {
+    if (!insertPreview || insertPreview.shiftedCodes.length === 0) return []
+    const shifted = new Set(insertPreview.shiftedCodes)
+    return snapshot.documents.filter((document) => {
+      const parsed = document.parsed
+      if (!parsed || !parsed.primaryCode || !parsed.secondaryCode) return false
+      if (parsed.code === null || parsed.code.length !== 6) return false
+      return parsed.primaryCode === addingChildFor && shifted.has(parsed.secondaryCode)
+    })
+  }, [insertPreview, addingChildFor, snapshot.documents])
+
+  const startAddChild = (primary: string): void => {
     const node = config.categories[primary]
     if (!node) return
     const code = freeCode(Object.keys(node.children))
@@ -71,10 +93,31 @@ export function SettingsDialog({ snapshot, onClose, onSaved, notify }: SettingsD
       notify('error', '该一级分类下的二级编号已用尽')
       return
     }
+    setAddingChildFor(primary)
+    setNewChildCode(code)
+    setNewChildName('')
+  }
+
+  const cancelAddChild = (): void => {
+    setAddingChildFor(null)
+    setNewChildName('')
+  }
+
+  const confirmAddChild = (): void => {
+    if (addingChildFor === null) return
+    const node = config.categories[addingChildFor]
+    if (!node) return
+    if (insertPreview?.error) {
+      notify('error', insertPreview.error)
+      return
+    }
+    if (!insertPreview?.children || shiftedDocuments.length > 0) return
     setCategories({
       ...config.categories,
-      [primary]: { ...node, children: { ...node.children, [code]: '新二级分类' } }
+      [addingChildFor]: { ...node, children: insertPreview.children }
     })
+    setAddingChildFor(null)
+    setNewChildName('')
   }
 
   const removeChild = (primary: string, child: string): void => {
@@ -218,9 +261,77 @@ export function SettingsDialog({ snapshot, onClose, onSaved, notify }: SettingsD
                         </button>
                       </div>
                     ))}
-                  <button type="button" className="link-button" onClick={() => addChild(code)} disabled={busy}>
-                    + 添加二级分类
-                  </button>
+                  {addingChildFor === code ? (
+                    <div className="insert-child">
+                      <div className="insert-child-row">
+                        <select
+                          className="select-input insert-code"
+                          value={newChildCode}
+                          onChange={(event) => setNewChildCode(event.target.value)}
+                          aria-label="新二级分类编号"
+                          disabled={busy}
+                        >
+                          {ALL_CODES.map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                              {node.children[option] ? ` · ${node.children[option]}` : ' · 空闲'}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          className="text-input"
+                          value={newChildName}
+                          onChange={(event) => setNewChildName(event.target.value)}
+                          placeholder="二级分类名称"
+                          aria-label="新二级分类名称"
+                          disabled={busy}
+                          autoFocus
+                        />
+                        <button
+                          type="button"
+                          className="button button-small button-primary"
+                          onClick={confirmAddChild}
+                          disabled={
+                            busy ||
+                            insertPreview === null ||
+                            insertPreview.error !== null ||
+                            shiftedDocuments.length > 0
+                          }
+                        >
+                          添加
+                        </button>
+                        <button type="button" className="button button-small button-quiet" onClick={cancelAddChild}>
+                          取消
+                        </button>
+                      </div>
+                      <p
+                        className={
+                          insertPreview?.error || shiftedDocuments.length > 0
+                            ? 'insert-hint is-warn'
+                            : 'insert-hint'
+                        }
+                      >
+                        {insertPreview?.error ?? (
+                          shiftedDocuments.length > 0 ? (
+                            <>
+                              该范围已有 {shiftedDocuments.length} 个文档（如 {shiftedDocuments[0]?.filename}），后移会让它们落入其他分类；请先移动文档，或改用末尾编号。
+                            </>
+                          ) : insertPreview && insertPreview.shiftedCodes.length > 0 ? (
+                            <>
+                              将把 {insertPreview.shiftedCodes.map((childCode) => `${code}/${childCode}`).join('、')}{' '}
+                              各后移一位，空出 {code}/{newChildCode}。添加后请点击“保存设置”。
+                            </>
+                          ) : (
+                            <>该编号空闲，将直接添加。添加后请点击“保存设置”。</>
+                          )
+                        )}
+                      </p>
+                    </div>
+                  ) : (
+                    <button type="button" className="link-button" onClick={() => startAddChild(code)} disabled={busy}>
+                      + 添加二级分类
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
