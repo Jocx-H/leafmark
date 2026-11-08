@@ -128,11 +128,20 @@ export function parseFilename(input: string, options: ParseOptions = {}): Parsed
       cursor = cursor.slice(close + 1)
 
       if (cursor.startsWith('[')) continue
+
       if (cursor.startsWith('_')) {
-        cursor = cursor.slice(1)
+        const afterSeparator = cursor.slice(1)
+        // Lenient parsing: existing files may separate tag groups with `_`,
+        // e.g. `000001_[模板元]_[C++]标题.md`. Titles may not start with `[`,
+        // so a bracket group after the separator is always another tag.
+        if (afterSeparator.startsWith('[')) {
+          cursor = afterSeparator
+          continue
+        }
+        cursor = afterSeparator
         separatorFound = true
       } else {
-        issues.push(issue(ISSUE.tagBlockSeparator, '标签块后必须紧跟一个下划线 “_”', 'error', 'tags'))
+        issues.push(issue(ISSUE.tagBlockSeparator, '标签块后必须紧跟一个下划线 “_”（保存时会生成规范化文件名）', 'error', 'tags'))
       }
       break
     }

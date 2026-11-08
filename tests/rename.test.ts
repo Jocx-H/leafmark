@@ -177,6 +177,32 @@ describe('rename flow', () => {
     await expect(session.commitRename(plan.id)).rejects.toMatchObject({ code: ISSUE.planUnknown })
   })
 
+  it('repairs underscore separated tag groups into the canonical name', async () => {
+    const { workspace, session } = await setup({
+      '000001_[模板元]_[C++]模板元编程特性总结.md': 'x'
+    })
+    const document = findDocument(session, '000001_[模板元]_[C++]模板元编程特性总结.md')
+    expect(document.status).toBe('invalid')
+    expect(document.parsed?.tags).toEqual(['模板元', 'C++'])
+    expect(document.parsed?.title).toBe('模板元编程特性总结')
+
+    const plan = await session.previewRename({
+      sourceRelativePath: document.relativePath,
+      primaryCode: '00',
+      secondaryCode: '00',
+      sequenceCode: '01',
+      tags: ['模板元', 'C++'],
+      title: '模板元编程特性总结'
+    })
+    expect(plan.targetFilename).toBe('000001_[模板元][C++]_模板元编程特性总结.md')
+    expect(plan.errors).toEqual([])
+    await session.commitRename(plan.id)
+
+    expect(await listFiles(workspace.root)).toContain('000001_[模板元][C++]_模板元编程特性总结.md')
+    expect(session.snapshot().documents[0]?.status).toBe('valid')
+    expect(session.snapshot().documents[0]?.parsed?.tags).toEqual(['模板元', 'C++'])
+  })
+
   it('resolves a conflict by assigning a free sequence', async () => {
     const { session } = await setup({
       '010100_a.md': 'a',

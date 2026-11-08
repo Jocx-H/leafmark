@@ -26,6 +26,20 @@ describe('parseFilename', () => {
     expect(parsed.issues).toEqual([])
   })
 
+  it('accepts tag groups separated by underscores and normalizes them', () => {
+    const parsed = parseFilename('010203_[CUDA]_[SpMM]_稀疏矩阵乘优化.md')
+    expect(parsed.tags).toEqual(['CUDA', 'SpMM'])
+    expect(parsed.title).toBe('稀疏矩阵乘优化')
+    expect(parsed.issues).toEqual([])
+  })
+
+  it('recognises a managed file whose tag groups are separated by underscores', () => {
+    const parsed = parseFilename('000001_[模板元]_[C++]模板元编程特性总结.md')
+    expect(parsed.tags).toEqual(['模板元', 'C++'])
+    expect(parsed.title).toBe('模板元编程特性总结')
+    expect(issueCodes(parsed)).toContain(ISSUE.tagBlockSeparator)
+  })
+
   it('keeps underscores inside the title', () => {
     const parsed = parseFilename('010203_[CUDA][SpMM]_带_下划线的标题.md')
     expect(parsed.tags).toEqual(['CUDA', 'SpMM'])
