@@ -213,6 +213,28 @@ async function main() {
   await researchGroup.locator('.tree-toggle').click()
   assert((await researchGroup.locator('.tree-children').count()) === 1, 'sidebar children did not expand')
 
+  // ---- add-primary scrolls to the new card and dragging reorders ----------
+  await page.getByTestId('settings').click()
+  await page.waitForSelector('.modal')
+  await page.getByRole('button', { name: '添加一级分类' }).click()
+  await page.waitForTimeout(500)
+  const focusedLabel = await page.evaluate(() => {
+    const element = document.activeElement
+    return element instanceof HTMLInputElement ? element.getAttribute('aria-label') : null
+  })
+  assert(focusedLabel === '一级分类 04 名称', `new primary was not focused: ${focusedLabel}`)
+
+  const card03 = page.locator('.category-card').filter({ has: page.locator('.code-pill', { hasText: /^03$/ }) })
+  const card04 = page.locator('.category-card').filter({ has: page.locator('.code-pill', { hasText: /^04$/ }) })
+  assert(await card04.isVisible(), 'new primary is not scrolled into view')
+  await card04.locator('.drag-handle').dragTo(card03)
+  await page.waitForTimeout(300)
+  await page.getByRole('button', { name: '保存设置' }).click()
+  await page.waitForTimeout(800)
+  const reorderedConfig = JSON.parse(await fs.readFile(path.join(workspace, '.leafmark.json'), 'utf8'))
+  assert(reorderedConfig.categories['03'].name === '新分类', 'dragged category did not take the target slot')
+  assert(reorderedConfig.categories['04'].name === '空分类', 'target category was not shifted down')
+
   // ---- unmanaged view stays readable -----------------------------------
   await page.getByRole('button', { name: '未纳入管理' }).click()
   await page.waitForTimeout(200)

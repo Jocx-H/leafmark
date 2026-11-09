@@ -2169,3 +2169,26 @@ body[data-platform="darwin"] .topbar {
   flex: 1;
   min-width: 0;
 }
+
+.drag-handle {
+  flex: 0 0 16px;
+  color: var(--muted-soft);
+  cursor: grab;
+  font-size: 14px;
+  line-height: 1;
+  text-align: center;
+  user-select: none;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}
+
+.category-card.is-dragging {
+  opacity: 0.5;
+}
+
+.category-card.is-drop-target {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(47, 107, 79, 0.12);
+}

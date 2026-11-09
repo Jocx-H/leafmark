@@ -52,3 +52,48 @@ export function insertChildCategory(
 
   return { children: next, shiftedCodes, error: null }
 }
+
+export interface ReorderPrimaryResult {
+  categories: Record<string, import('./types').CategoryNode>
+  mapping: Record<string, string>
+  /** Codes whose position changed, i.e. codes that would need document renames. */
+  movedCodes: string[]
+}
+
+/**
+ * Moves `sourceCode` to the position of `targetCode` and keeps the existing set of
+ * code slots. Codes are reassigned in list order, so the list stays sorted by code
+ * while category contents move with their node.
+ */
+export function reorderPrimaryCategories(
+  categories: Record<string, import('./types').CategoryNode>,
+  sourceCode: string,
+  targetCode: string
+): ReorderPrimaryResult | null {
+  const codes = Object.keys(categories).sort()
+  const sourceIndex = codes.indexOf(sourceCode)
+  const targetIndex = codes.indexOf(targetCode)
+  if (sourceIndex === -1 || targetIndex === -1 || sourceIndex === targetIndex) return null
+
+  const reordered = [...codes]
+  reordered.splice(sourceIndex, 1)
+  reordered.splice(targetIndex, 0, sourceCode)
+
+  // `reordered[i]` is the category that now occupies code slot `codes[i]`.
+  const mapping: Record<string, string> = {}
+  codes.forEach((slotCode, index) => {
+    mapping[reordered[index] as string] = slotCode
+  })
+
+  const next: Record<string, import('./types').CategoryNode> = {}
+  const movedCodes: string[] = []
+  for (const oldCode of codes) {
+    const node = categories[oldCode]
+    if (!node) continue
+    const newCode = mapping[oldCode] as string
+    next[newCode] = node
+    if (newCode !== oldCode) movedCodes.push(oldCode)
+  }
+
+  return { categories: next, mapping, movedCodes }
+}

@@ -68,3 +68,56 @@ describe('insertChildCategory', () => {
     expect(result.children).toEqual({ '00': 'A', '03': 'B', '01': 'C' })
   })
 })
+
+import { reorderPrimaryCategories } from '@shared/config/categories'
+
+const primaries = {
+  '00': { name: 'NVGPU', children: { '00': 'A' } },
+  '01': { name: 'C++', children: { '00': 'B' } },
+  '02': { name: 'CUDA', children: { '00': 'C' } },
+  '03': { name: '算子', children: { '00': 'D' } }
+}
+
+describe('reorderPrimaryCategories', () => {
+  it('moves the first category to the third position', () => {
+    const result = reorderPrimaryCategories(primaries, '00', '02')
+    expect(result).not.toBeNull()
+    expect(result?.movedCodes).toEqual(['00', '01', '02'])
+    expect(Object.keys(result?.categories ?? {}).sort()).toEqual(['00', '01', '02', '03'])
+    expect(result?.categories['00']?.name).toBe('C++')
+    expect(result?.categories['01']?.name).toBe('CUDA')
+    expect(result?.categories['02']?.name).toBe('NVGPU')
+    expect(result?.categories['03']?.name).toBe('算子')
+  })
+
+  it('moves a later category to the front', () => {
+    const result = reorderPrimaryCategories(primaries, '03', '00')
+    expect(result?.categories['00']?.name).toBe('算子')
+    expect(result?.categories['01']?.name).toBe('NVGPU')
+    expect(result?.categories['02']?.name).toBe('C++')
+    expect(result?.categories['03']?.name).toBe('CUDA')
+  })
+
+  it('keeps children attached to their category', () => {
+    const result = reorderPrimaryCategories(primaries, '00', '02')
+    expect(result?.categories['02']?.children).toEqual({ '00': 'A' })
+    expect(result?.categories['00']?.children).toEqual({ '00': 'B' })
+  })
+
+  it('returns null for unknown or identical codes', () => {
+    expect(reorderPrimaryCategories(primaries, '00', '00')).toBeNull()
+    expect(reorderPrimaryCategories(primaries, '00', '09')).toBeNull()
+  })
+
+  it('preserves non-contiguous code slots', () => {
+    const result = reorderPrimaryCategories(
+      { '00': { name: 'A', children: {} }, '10': { name: 'B', children: {} }, '20': { name: 'C', children: {} } },
+      '20',
+      '00'
+    )
+    expect(Object.keys(result?.categories ?? {}).sort()).toEqual(['00', '10', '20'])
+    expect(result?.categories['00']?.name).toBe('C')
+    expect(result?.categories['10']?.name).toBe('A')
+    expect(result?.categories['20']?.name).toBe('B')
+  })
+})

@@ -3,7 +3,7 @@ import type { Snapshot } from '@shared/ipc-contracts'
 import type { CategoryNode, LeafmarkConfig } from '@shared/config/types'
 import { cloneConfig } from '@shared/config/types'
 import { validateConfig } from '@shared/config/validate'
-import { insertChildCategory } from '@shared/config/categories'
+import { insertChildCategory, reorderPrimaryCategories } from '@shared/config/categories'
 import { TagEditor } from '../../components/TagEditor'
 import { Modal } from '../../components/Modal'
 
@@ -31,6 +31,8 @@ export function SettingsDialog({ snapshot, onClose, onSaved, notify }: SettingsD
   const [collapsedPrimaries, setCollapsedPrimaries] = useState<Set<string>>(
     () => new Set(Object.keys(snapshot.config.categories))
   )
+  const [draggingPrimary, setDraggingPrimary] = useState<string | null>(null)
+  const [dragOverPrimary, setDragOverPrimary] = useState<string | null>(null)
 
   const validation = useMemo(() => validateConfig(config), [config])
   const errors = validation.issues.filter((item) => item.severity === 'error')
@@ -67,6 +69,45 @@ export function SettingsDialog({ snapshot, onClose, onSaved, notify }: SettingsD
       next.delete(code)
       return next
     })
+    window.setTimeout(() => {
+      const card = document.querySelector<HTMLElement>(`[data-primary-code="${code}"]`)
+      card?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      const input = card?.querySelector<HTMLInputElement>('input')
+      input?.focus()
+      input?.select()
+    }, 60)
+  }
+
+  const handlePrimaryDrop = (targetCode: string): void => {
+    const sourceCode = draggingPrimary
+    setDraggingPrimary(null)
+    setDragOverPrimary(null)
+    if (!sourceCode || sourceCode === targetCode) return
+
+    const result = reorderPrimaryCategories(config.categories, sourceCode, targetCode)
+    if (!result) return
+
+    const affectedDocuments = snapshot.documents.filter((document) => {
+      const parsed = document.parsed
+      if (!parsed?.primaryCode || parsed.code === null || parsed.code.length !== 6) return false
+      return result.movedCodes.includes(parsed.primaryCode)
+    })
+
+    if (affectedDocuments.length > 0) {
+      const names = [...new Set(
+        affectedDocuments
+          .map((document) => document.parsed?.primaryCode)
+          .filter((primary): primary is string => typeof primary === 'string')
+          .map((primary) => config.categories[primary]?.name ?? primary)
+      )]
+      notify(
+        'error',
+        `无法调整顺序：${names.join('、')} 下共有 ${affectedDocuments.length} 个文档，编号会随之改变。请先移动这些文档。`
+      )
+      return
+    }
+
+    setCategories(result.categories)
   }
 
   const removePrimary = (code: string): void => {
@@ -234,8 +275,45 @@ export function SettingsDialog({ snapshot, onClose, onSaved, notify }: SettingsD
             .map(([code, node]) => {
               const isCollapsed = collapsedPrimaries.has(code)
               return (
-              <div className="category-card" key={code}>
+              <div
+                className={
+                  draggingPrimary === code
+                    ? 'category-card is-dragging'
+                    : dragOverPrimary === code
+                      ? 'category-card is-drop-target'
+                      : 'category-card'
+                }
+                key={code}
+                data-primary-code={code}
+                onDragOver={(event) => {
+                  if (!draggingPrimary) return
+                  event.preventDefault()
+                  event.dataTransfer.dropEffect = 'move'
+                  if (dragOverPrimary !== code) setDragOverPrimary(code)
+                }}
+                onDrop={(event) => {
+                  event.preventDefault()
+                  handlePrimaryDrop(code)
+                }}
+              >
                 <div className="category-row">
+                  <span
+                    className="drag-handle"
+                    draggable
+                    aria-hidden="true"
+                    title="拖拽调整一级分类顺序"
+                    onDragStart={(event) => {
+                      setDraggingPrimary(code)
+                      event.dataTransfer.effectAllowed = 'move'
+                      event.dataTransfer.setData('text/plain', code)
+                    }}
+                    onDragEnd={() => {
+                      setDraggingPrimary(null)
+                      setDragOverPrimary(null)
+                    }}
+                  >
+                    ⠿
+                  </span>
                   <button
                     type="button"
                     className="category-toggle"
