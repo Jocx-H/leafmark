@@ -111,7 +111,7 @@ export interface LeafmarkApi {
   cancelPlan(planId: string): Promise<Result<null>>
   createDocument(input: CreateDocumentInput): Promise<Result<CreateResult>>
   undoLastRename(): Promise<Result<UndoResult>>
-  updateConfig(config: LeafmarkConfig): Promise<Result<Snapshot>>
+  updateConfig(config: LeafmarkConfig, mapping?: Record<string, string>): Promise<Result<Snapshot>>
   resetConfig(): Promise<Result<Snapshot>>
   getAppInfo(): Promise<Result<AppInfo>>
   onSnapshot(listener: (snapshot: Snapshot) => void): () => void

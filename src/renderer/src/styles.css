@@ -2192,3 +2192,19 @@ body[data-platform="darwin"] .topbar {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(47, 107, 79, 0.12);
 }
+
+.settings-section-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.rename-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 11px;
+  white-space: nowrap;
+}

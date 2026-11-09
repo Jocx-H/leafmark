@@ -31,6 +31,19 @@ function asStringArray(value: unknown, label: string, maxItems = 64, maxLength =
   return value.map((item, index) => asString(item, `${label}[${index}]`, maxLength))
 }
 
+function asCodeMapping(value: unknown): Record<string, string> | undefined {
+  if (value === undefined || value === null) return undefined
+  const record = asRecord(value, 'primaryMapping')
+  const mapping: Record<string, string> = {}
+  for (const [key, target] of Object.entries(record)) {
+    if (!/^[0-9]{2}$/.test(key) || typeof target !== 'string' || !/^[0-9]{2}$/.test(target)) {
+      throw new LeafmarkError(ISSUE.invalidInput, '分类编号映射格式不正确')
+    }
+    mapping[key] = target
+  }
+  return mapping
+}
+
 function isTrustedUrl(url: string): boolean {
   if (url.startsWith('file://')) return true
   const devUrl = process.env.ELECTRON_RENDERER_URL
@@ -94,9 +107,9 @@ export function registerIpcHandlers(appState: AppState): void {
     })
   })
   handle(IPC.undoLastRename, () => appState.undoLastRename())
-  handle(IPC.updateConfig, (config) => {
+  handle(IPC.updateConfig, (config, mapping) => {
     asRecord(config, 'config')
-    return appState.updateConfig(config as LeafmarkConfig)
+    return appState.updateConfig(config as LeafmarkConfig, asCodeMapping(mapping))
   })
   handle(IPC.resetConfig, () => appState.resetConfig())
   handle(IPC.getAppInfo, (): AppInfo => ({

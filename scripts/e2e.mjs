@@ -288,6 +288,61 @@ async function main() {
   await emptyPage.waitForSelector('.empty-workspace', { timeout: 20_000 })
   await emptyPage.screenshot({ path: path.join(shotsDir, '09-empty.png') })
   await emptyApp.close()
+
+  // ---- batch category move renames documents and can be undone ----------
+  const batchRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'leafmark-batch-e2e-'))
+  const batchConfig = {
+    schemaVersion: 1,
+    categories: {
+      '00': { name: 'A', children: { '00': 'a' } },
+      '01': { name: 'B', children: { '00': 'b' } }
+    }
+  }
+  await fs.writeFile(path.join(batchRoot, '.leafmark.json'), `${JSON.stringify(batchConfig, null, 2)}\n`)
+  await fs.writeFile(path.join(batchRoot, '000100_[标签]_a.md'), 'A 内容')
+  await fs.writeFile(path.join(batchRoot, '010100_b.md'), 'B 内容')
+
+  const batchApp = await electron.launch({
+    executablePath: electronPath,
+    cwd: project,
+    args: ['--no-sandbox', `--user-data-dir=${path.join(batchRoot, 'userdata')}`, project, batchRoot],
+    env,
+    timeout: 60_000
+  })
+  const batchPage = await batchApp.firstWindow()
+  await batchPage.waitForSelector('[data-testid="content"]', { timeout: 30_000 })
+  await batchPage.getByTestId('settings').click()
+  await batchPage.waitForSelector('.modal')
+
+  const batchCard = (code) =>
+    batchPage.locator('.category-card').filter({ has: batchPage.locator('.code-pill', { hasText: new RegExp(`^${code}$`) }) })
+  await batchCard('01').locator('.drag-handle').dragTo(batchCard('00'))
+  await batchPage.waitForTimeout(300)
+  assert((await batchPage.locator('.rename-badge').count()) === 1, 'batch rename badge is missing')
+  await batchPage.getByRole('button', { name: /保存并重命名/ }).click()
+  await batchPage.getByRole('button', { name: '确认保存并改名' }).waitFor({ timeout: 5_000 })
+  await batchPage.screenshot({ path: path.join(shotsDir, '10-batch-confirm.png') })
+  await batchPage.getByRole('button', { name: '确认保存并改名' }).click()
+  await batchPage.waitForTimeout(1200)
+
+  const movedFiles = await fs.readdir(batchRoot)
+  assert(movedFiles.includes('010100_[标签]_a.md'), 'batch rename did not move the first document')
+  assert(movedFiles.includes('000100_b.md'), 'batch rename did not move the second document')
+  assert(
+    (await fs.readFile(path.join(batchRoot, '010100_[标签]_a.md'), 'utf8')) === 'A 内容',
+    'batch rename changed file content'
+  )
+  const movedConfig = JSON.parse(await fs.readFile(path.join(batchRoot, '.leafmark.json'), 'utf8'))
+  assert(movedConfig.categories['00'].name === 'B', 'batch rename did not reorder the config')
+
+  await batchPage.getByTestId('undo').click()
+  await batchPage.waitForTimeout(1200)
+  const restoredFiles = await fs.readdir(batchRoot)
+  assert(restoredFiles.includes('000100_[标签]_a.md'), 'undo did not restore the first document')
+  assert(restoredFiles.includes('010100_b.md'), 'undo did not restore the second document')
+  await batchApp.close()
+  await fs.rm(batchRoot, { recursive: true, force: true })
+
   console.log(`rows: ${rows}, screenshots: ${shotsDir}`)
 
   if (consoleErrors.length > 0) {

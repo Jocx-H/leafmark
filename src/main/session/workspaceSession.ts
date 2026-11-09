@@ -3,7 +3,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { ISSUE, LeafmarkError, hasErrors, issue } from '@shared/errors'
 import type { LeafmarkConfig } from '@shared/config/types'
-import { cloneConfig, createDefaultConfig } from '@shared/config/types'
+import { cloneConfig, createDefaultConfig, type CategoryNode } from '@shared/config/types'
 import { validateConfig } from '@shared/config/validate'
 import type { DocumentRecord, ScanProblem, ScanResult, TagStat } from '@shared/model'
 import { recommendSequence } from '@shared/naming/allocate'
@@ -30,7 +30,7 @@ import {
 import { atomicRename, checkCollision, lstatOrNull } from '../rename/fsOps'
 import { metadataFromDocument, prepareMetadata, splitIssues } from '../rename/metadata'
 import { WorkspaceWatcher } from '../watcher/watcher'
-import { dirnamePosix, resolveInside } from '../util/paths'
+import { dirnamePosix, normalizeForCompare, resolveInside } from '../util/paths'
 
 const PLAN_TTL_MS = 10 * 60 * 1000
 
@@ -41,13 +41,25 @@ interface StoredPlan {
   fingerprint: { size: number; mtimeMs: number }
 }
 
-interface UndoEntry {
+interface RenameMove {
   fromAbsolute: string
   toAbsolute: string
   fromRelative: string
   toRelative: string
-  label: string
 }
+
+interface BatchMove extends RenameMove {
+  fromName: string
+  targetName: string
+  /** Temporary name used while the batch is staged. */
+  temporary?: string
+  /** Temporary name used while a rollback is staged. */
+  rollbackTemporary?: string
+}
+
+type UndoEntry =
+  | { kind: 'rename'; moves: RenameMove[]; label: string }
+  | { kind: 'categoryMapping'; mapping: Record<string, string>; label: string }
 
 type SnapshotListener = (snapshot: Snapshot) => void
 
@@ -75,6 +87,7 @@ export class WorkspaceSession {
   private watcherActive = false
   private recents: string[] = []
   private disposed = false
+  private batchInProgress = false
 
   private constructor(
     readonly rootPath: string,
@@ -224,7 +237,7 @@ export class WorkspaceSession {
     if (this.disposed) return
     if (this.scanPromise) {
       await this.scanPromise
-      return
+      if (!force) return
     }
 
     const previousSignature = this.signature()
@@ -531,10 +544,15 @@ export class WorkspaceSession {
     this.addDocument(record)
 
     this.undoStack.push({
-      fromAbsolute: sourceAbsolute,
-      toAbsolute: targetAbsolute,
-      fromRelative: view.sourceRelativePath,
-      toRelative: view.targetRelativePath,
+      kind: 'rename',
+      moves: [
+        {
+          fromAbsolute: sourceAbsolute,
+          toAbsolute: targetAbsolute,
+          fromRelative: view.sourceRelativePath,
+          toRelative: view.targetRelativePath
+        }
+      ],
       label: `${sourceName} → ${path.basename(targetAbsolute)}`
     })
 
@@ -631,7 +649,19 @@ export class WorkspaceSession {
       }
     }
 
-    const currentStat = await lstatOrNull(entry.toAbsolute)
+    if (entry.kind === 'categoryMapping') {
+      return this.undoCategoryMapping(entry)
+    }
+    return this.undoRenameMoves(entry.moves, entry.label)
+  }
+
+  private async undoRenameMoves(moves: RenameMove[], label: string): Promise<UndoResult> {
+    const move = moves[0]
+    if (!move) {
+      return { snapshot: this.snapshot(), undone: false, message: '撤销记录为空', documentPath: null }
+    }
+
+    const currentStat = await lstatOrNull(move.toAbsolute)
     if (currentStat === null) {
       return {
         snapshot: this.snapshot(),
@@ -642,9 +672,9 @@ export class WorkspaceSession {
     }
 
     const collision = await checkCollision(
-      path.dirname(entry.fromAbsolute),
-      path.basename(entry.fromAbsolute),
-      path.basename(entry.toAbsolute)
+      path.dirname(move.fromAbsolute),
+      path.basename(move.fromAbsolute),
+      path.basename(move.toAbsolute)
     )
     if (collision.exact || collision.caseInsensitive) {
       return {
@@ -656,7 +686,7 @@ export class WorkspaceSession {
     }
 
     try {
-      await atomicRename(entry.toAbsolute, entry.fromAbsolute)
+      await atomicRename(move.toAbsolute, move.fromAbsolute)
     } catch (error) {
       return {
         snapshot: this.snapshot(),
@@ -667,24 +697,309 @@ export class WorkspaceSession {
     }
 
     this.undoStack.pop()
-    this.removeDocument(entry.toRelative)
-    const record = await this.documentRecordFor(entry.fromAbsolute, entry.fromRelative)
+    this.removeDocument(move.toRelative)
+    const record = await this.documentRecordFor(move.fromAbsolute, move.fromRelative)
     this.addDocument(record)
     this.markChanged()
 
     return {
       snapshot: this.snapshot(),
       undone: true,
-      message: `已撤销：${entry.label}`,
-      documentPath: entry.fromRelative
+      message: `已撤销：${label}`,
+      documentPath: move.fromRelative
     }
   }
 
-  async updateConfig(nextConfig: LeafmarkConfig): Promise<Snapshot> {
+  private resolvePrimaryMapping(mapping: Record<string, string>): Record<string, string> {
+    const codes = Object.keys(this.config.categories)
+    const full: Record<string, string> = {}
+    for (const code of codes) full[code] = code
+
+    for (const [oldCode, newCode] of Object.entries(mapping)) {
+      if (!/^[0-9]{2}$/.test(oldCode) || !/^[0-9]{2}$/.test(newCode)) {
+        throw new LeafmarkError(ISSUE.invalidInput, '分类编号映射必须使用两位数字')
+      }
+      if (!codes.includes(oldCode)) continue
+      full[oldCode] = newCode
+    }
+
+    const values = Object.values(full)
+    if (new Set(values).size !== values.length) {
+      throw new LeafmarkError(ISSUE.invalidInput, '分类编号映射存在重复的目标编号')
+    }
+    return full
+  }
+
+  private assertMappingTargets(nextConfig: LeafmarkConfig, mapping: Record<string, string>): void {
+    for (const [oldCode, newCode] of Object.entries(mapping)) {
+      if (oldCode === newCode) continue
+      if (!nextConfig.categories[newCode]) {
+        throw new LeafmarkError(
+          ISSUE.configInvalid,
+          `分类 ${oldCode} 的新编号 ${newCode} 不在保存的配置中`
+        )
+      }
+    }
+  }
+
+  private async planPrimaryMappingMoves(mapping: Record<string, string>): Promise<BatchMove[]> {
+    const moves: BatchMove[] = []
+
+    for (const document of this.documents) {
+      const parsed = document.parsed
+      if (!parsed || parsed.code === null || parsed.code.length !== 6) continue
+      const oldPrimary = parsed.primaryCode
+      if (!oldPrimary) continue
+      const newPrimary = mapping[oldPrimary]
+      if (!newPrimary || newPrimary === oldPrimary) continue
+
+      if (!document.filename.startsWith(parsed.code) || document.filename.charAt(6) !== '_') {
+        throw new LeafmarkError(
+          ISSUE.ioFailed,
+          `无法自动改名：${document.filename} 的编号格式不规范，请先修复该文件`
+        )
+      }
+
+      const newName = `${newPrimary}${document.filename.slice(2)}`
+      if (newName === document.filename) continue
+
+      const sourceAbsolute = resolveInside(this.rootPath, document.relativePath)
+      const sourceStat = await lstatOrNull(sourceAbsolute)
+      if (sourceStat === null) {
+        throw new LeafmarkError(ISSUE.sourceMissing, `文件已不存在：${document.relativePath}`)
+      }
+      if (sourceStat.isSymbolicLink()) {
+        throw new LeafmarkError(ISSUE.symlink, `符号链接不参与批量改名：${document.relativePath}`)
+      }
+      await this.assertInsideRealRoot(path.dirname(sourceAbsolute))
+
+      const targetAbsolute = path.join(path.dirname(sourceAbsolute), newName)
+      const directory = dirnamePosix(document.relativePath)
+      moves.push({
+        fromAbsolute: sourceAbsolute,
+        toAbsolute: targetAbsolute,
+        fromRelative: document.relativePath,
+        toRelative: directory === '.' ? newName : `${directory}/${newName}`,
+        fromName: document.filename,
+        targetName: newName
+      })
+    }
+
+    await this.assertBatchTargets(moves)
+    return moves
+  }
+
+  private async assertBatchTargets(moves: BatchMove[]): Promise<void> {
+    if (moves.length === 0) return
+
+    const sourceKeys = new Set(moves.map((move) => normalizeForCompare(move.fromAbsolute)))
+    const targetKeys = new Set<string>()
+    const entriesByDirectory = new Map<string, string[]>()
+
+    for (const move of moves) {
+      const directory = path.dirname(move.toAbsolute)
+      if (!entriesByDirectory.has(directory)) {
+        try {
+          entriesByDirectory.set(directory, await fs.readdir(directory))
+        } catch (error) {
+          throw new LeafmarkError(
+            ISSUE.ioFailed,
+            `无法读取目录以检查批量改名冲突：${(error as Error).message}`
+          )
+        }
+      }
+    }
+
+    for (const move of moves) {
+      const targetKey = normalizeForCompare(move.toAbsolute)
+      if (targetKeys.has(targetKey)) {
+        throw new LeafmarkError(ISSUE.targetCaseConflict, `批量改名产生重复目标：${move.targetName}`)
+      }
+      targetKeys.add(targetKey)
+
+      const directory = path.dirname(move.toAbsolute)
+      const targetNameKey = normalizeForCompare(move.targetName)
+      for (const entry of entriesByDirectory.get(directory) ?? []) {
+        const entryAbsolute = path.join(directory, entry)
+        if (sourceKeys.has(normalizeForCompare(entryAbsolute))) continue
+        if (normalizeForCompare(entry) === targetNameKey) {
+          throw new LeafmarkError(ISSUE.targetCaseConflict, `目标名称已存在：${entry}`)
+        }
+      }
+    }
+  }
+
+  private async executeBatchMoves(moves: BatchMove[]): Promise<void> {
+    if (moves.length === 0) return
+
+    try {
+      for (const move of moves) {
+        const temporary = path.join(
+          path.dirname(move.fromAbsolute),
+          `.leafmark-batch-${randomUUID()}`
+        )
+        await fs.rename(move.fromAbsolute, temporary)
+        move.temporary = temporary
+      }
+
+      for (const move of moves) {
+        if (!move.temporary) {
+          throw new LeafmarkError(ISSUE.ioFailed, '批量改名状态异常')
+        }
+        await fs.rename(move.temporary, move.toAbsolute)
+        move.temporary = undefined
+      }
+    } catch (error) {
+      await this.restoreBatchMoves(moves)
+      throw new LeafmarkError(
+        ISSUE.ioFailed,
+        `批量改名失败，已尝试恢复原文件：${(error as Error).message}`
+      )
+    }
+  }
+
+  private async restoreBatchMoves(moves: BatchMove[]): Promise<void> {
+    const isolated: BatchMove[] = []
+
+    for (const move of moves) {
+      if (await lstatOrNull(move.fromAbsolute)) continue
+
+      const isolateName = path.join(
+        path.dirname(move.fromAbsolute),
+        `.leafmark-undo-${randomUUID()}`
+      )
+
+      if (move.temporary && (await lstatOrNull(move.temporary))) {
+        try {
+          await fs.rename(move.temporary, isolateName)
+          move.rollbackTemporary = isolateName
+          isolated.push(move)
+        } catch {
+          // best effort
+        }
+        continue
+      }
+
+      if (await lstatOrNull(move.toAbsolute)) {
+        try {
+          await fs.rename(move.toAbsolute, isolateName)
+          move.rollbackTemporary = isolateName
+          isolated.push(move)
+        } catch {
+          // best effort
+        }
+      }
+    }
+
+    for (const move of isolated.reverse()) {
+      if (!move.rollbackTemporary) continue
+      try {
+        await fs.rename(move.rollbackTemporary, move.fromAbsolute)
+      } catch {
+        // best effort
+      }
+      move.rollbackTemporary = undefined
+    }
+  }
+
+  private async writeBatchConfig(nextConfig: LeafmarkConfig, moves: BatchMove[]): Promise<void> {
+    const raw = this.configState.status === 'ok' ? this.configState.raw : await readConfigRaw(this.rootPath)
+    try {
+      await writeConfigFile(this.rootPath, nextConfig, raw)
+    } catch (error) {
+      await this.restoreBatchMoves(moves)
+      throw error
+    }
+  }
+
+  private async undoCategoryMapping(
+    entry: Extract<UndoEntry, { kind: 'categoryMapping' }>
+  ): Promise<UndoResult> {
+    let moves: BatchMove[] = []
+    this.batchInProgress = true
+    try {
+      const mapping = this.resolvePrimaryMapping(entry.mapping)
+      const changed = Object.entries(mapping).some(([oldCode, newCode]) => oldCode !== newCode)
+      if (!changed) {
+        this.undoStack.pop()
+        return {
+          snapshot: this.snapshot(),
+          undone: true,
+          message: '分类顺序已恢复到原始状态',
+          documentPath: null
+        }
+      }
+
+      const nextConfig = cloneConfig(this.config)
+      nextConfig.categories = {}
+      for (const [code, node] of Object.entries(this.config.categories)) {
+        nextConfig.categories[mapping[code] ?? code] = node
+      }
+
+      moves = await this.planPrimaryMappingMoves(mapping)
+      await this.executeBatchMoves(moves)
+      await this.writeBatchConfig(nextConfig, moves)
+    } catch (error) {
+      this.batchInProgress = false
+      return {
+        snapshot: this.snapshot(),
+        undone: false,
+        message: error instanceof LeafmarkError ? error.message : '撤销失败',
+        documentPath: null
+      }
+    } finally {
+      this.batchInProgress = false
+    }
+
+    this.undoStack.pop()
+    this.plans.clear()
+    this.configState = await readConfigFile(this.rootPath)
+    await this.runScan(true)
+
+    return {
+      snapshot: this.snapshot(),
+      undone: true,
+      message: `已撤销：${entry.label}`,
+      documentPath: moves.find((move) => move.toRelative)?.toRelative ?? null
+    }
+  }
+
+  async updateConfig(nextConfig: LeafmarkConfig, mapping?: Record<string, string>): Promise<Snapshot> {
     const validated = validateConfig(nextConfig)
     const firstError = validated.issues.find((item) => item.severity === 'error')
     if (firstError) {
       throw new LeafmarkError(ISSUE.configInvalid, firstError.message)
+    }
+
+    if (mapping) {
+      const fullMapping = this.resolvePrimaryMapping(mapping)
+      const changed = Object.entries(fullMapping).some(([oldCode, newCode]) => oldCode !== newCode)
+      if (changed) {
+        this.batchInProgress = true
+        try {
+          this.assertMappingTargets(validated.config, fullMapping)
+          const moves = await this.planPrimaryMappingMoves(fullMapping)
+          await this.executeBatchMoves(moves)
+          await this.writeBatchConfig(validated.config, moves)
+          this.plans.clear()
+          this.configState = await readConfigFile(this.rootPath)
+          if (moves.length > 0) {
+            const inverse: Record<string, string> = {}
+            for (const [oldCode, newCode] of Object.entries(fullMapping)) {
+              if (oldCode !== newCode) inverse[newCode] = oldCode
+            }
+            this.undoStack.push({
+              kind: 'categoryMapping',
+              mapping: inverse,
+              label: `移动一级分类并重命名 ${moves.length} 个文档`
+            })
+          }
+        } finally {
+          this.batchInProgress = false
+        }
+        await this.runScan(true)
+        return this.snapshot()
+      }
     }
 
     const raw = this.configState.status === 'ok' ? this.configState.raw : await readConfigRaw(this.rootPath)
@@ -704,7 +1019,7 @@ export class WorkspaceSession {
   }
 
   private handleWatchBatch(paths: string[], overflow: boolean): void {
-    if (this.disposed) return
+    if (this.disposed || this.batchInProgress) return
     void overflow
     const configTouched = paths.some(
       (candidate) => candidate === CONFIG_FILENAME || candidate.endsWith(`/${CONFIG_FILENAME}`)

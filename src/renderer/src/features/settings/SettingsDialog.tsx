@@ -33,6 +33,10 @@ export function SettingsDialog({ snapshot, onClose, onSaved, notify }: SettingsD
   )
   const [draggingPrimary, setDraggingPrimary] = useState<string | null>(null)
   const [dragOverPrimary, setDragOverPrimary] = useState<string | null>(null)
+  const [primaryMapping, setPrimaryMapping] = useState<Record<string, string>>(() =>
+    Object.fromEntries(Object.keys(snapshot.config.categories).map((code) => [code, code]))
+  )
+  const [confirmBatchSave, setConfirmBatchSave] = useState(false)
 
   const validation = useMemo(() => validateConfig(config), [config])
   const errors = validation.issues.filter((item) => item.severity === 'error')
@@ -64,6 +68,7 @@ export function SettingsDialog({ snapshot, onClose, onSaved, notify }: SettingsD
       return
     }
     setCategories({ ...config.categories, [code]: { name: '新分类', children: { '00': '未分类' } } })
+    setPrimaryMapping((current) => ({ ...current, [code]: code }))
     setCollapsedPrimaries((current) => {
       const next = new Set(current)
       next.delete(code)
@@ -87,33 +92,43 @@ export function SettingsDialog({ snapshot, onClose, onSaved, notify }: SettingsD
     const result = reorderPrimaryCategories(config.categories, sourceCode, targetCode)
     if (!result) return
 
-    const affectedDocuments = snapshot.documents.filter((document) => {
-      const parsed = document.parsed
-      if (!parsed?.primaryCode || parsed.code === null || parsed.code.length !== 6) return false
-      return result.movedCodes.includes(parsed.primaryCode)
-    })
-
-    if (affectedDocuments.length > 0) {
-      const names = [...new Set(
-        affectedDocuments
-          .map((document) => document.parsed?.primaryCode)
-          .filter((primary): primary is string => typeof primary === 'string')
-          .map((primary) => config.categories[primary]?.name ?? primary)
-      )]
-      notify(
-        'error',
-        `无法调整顺序：${names.join('、')} 下共有 ${affectedDocuments.length} 个文档，编号会随之改变。请先移动这些文档。`
-      )
-      return
-    }
-
     setCategories(result.categories)
+    setPrimaryMapping((current) => {
+      const next = { ...current }
+      for (const originalCode of Object.keys(next)) {
+        const currentCode = next[originalCode]
+        if (!currentCode) continue
+        const target = result.mapping[currentCode]
+        if (target) next[originalCode] = target
+      }
+      return next
+    })
   }
 
   const removePrimary = (code: string): void => {
+    const node = config.categories[code]
+    if (!node) return
+    const documents = snapshot.documents.filter((document) => {
+      const parsed = document.parsed
+      return parsed?.primaryCode === code && parsed.code !== null && parsed.code.length === 6
+    })
+    if (documents.length > 0) {
+      notify('error', `分类 ${code} 下还有 ${documents.length} 个文档，请先移动这些文档再删除`)
+      return
+    }
+    const pendingOrder = Object.entries(primaryMapping).some(([oldCode, newCode]) => oldCode !== newCode)
+    if (pendingOrder) {
+      notify('error', '请先保存当前分类排序，再删除分类')
+      return
+    }
     const next = { ...config.categories }
     delete next[code]
     setCategories(next)
+    setPrimaryMapping((current) => {
+      const mapping = { ...current }
+      delete mapping[code]
+      return mapping
+    })
   }
 
   const togglePrimary = (code: string): void => {
@@ -181,23 +196,71 @@ export function SettingsDialog({ snapshot, onClose, onSaved, notify }: SettingsD
   const removeChild = (primary: string, child: string): void => {
     const node = config.categories[primary]
     if (!node) return
+    const documents = snapshot.documents.filter((document) => {
+      const parsed = document.parsed
+      return (
+        parsed?.primaryCode === primary &&
+        parsed.secondaryCode === child &&
+        parsed.code !== null &&
+        parsed.code.length === 6
+      )
+    })
+    if (documents.length > 0) {
+      notify('error', `分类 ${primary}/${child} 下还有 ${documents.length} 个文档，请先移动这些文档再删除`)
+      return
+    }
     const children = { ...node.children }
     delete children[child]
     setCategories({ ...config.categories, [primary]: { ...node, children } })
   }
 
+  const mappingChanges = useMemo(() => {
+    const changes: Record<string, string> = {}
+    for (const [oldCode, newCode] of Object.entries(primaryMapping)) {
+      if (oldCode !== newCode && config.categories[newCode]) changes[oldCode] = newCode
+    }
+    return changes
+  }, [primaryMapping, config.categories])
+
+  const batchDocuments = useMemo(() => {
+    const moved = new Set(Object.keys(mappingChanges))
+    if (moved.size === 0) return []
+    return snapshot.documents.filter((document) => {
+      const parsed = document.parsed
+      if (!parsed?.primaryCode || parsed.code === null || parsed.code.length !== 6) return false
+      return moved.has(parsed.primaryCode)
+    })
+  }, [mappingChanges, snapshot.documents])
+
   const save = async (): Promise<void> => {
     if (errors.length > 0 || busy) return
     setBusy(true)
-    const result = await window.leafmark.updateConfig(config)
+    const result = await window.leafmark.updateConfig(
+      config,
+      Object.keys(mappingChanges).length > 0 ? mappingChanges : undefined
+    )
     setBusy(false)
     if (!result.ok) {
       notify('error', result.error.message)
       return
     }
-    notify('success', '工作区配置已保存')
+    notify(
+      'success',
+      batchDocuments.length > 0
+        ? `配置已保存，并重命名 ${batchDocuments.length} 个文档`
+        : '工作区配置已保存'
+    )
     onSaved(result.value)
     onClose()
+  }
+
+  const requestSave = (): void => {
+    if (errors.length > 0 || busy) return
+    if (batchDocuments.length > 0) {
+      setConfirmBatchSave(true)
+      return
+    }
+    void save()
   }
 
   const reset = async (): Promise<void> => {
@@ -229,8 +292,8 @@ export function SettingsDialog({ snapshot, onClose, onSaved, notify }: SettingsD
           <button type="button" className="button button-quiet" onClick={onClose} disabled={busy}>
             取消
           </button>
-          <button type="button" className="button button-primary" onClick={() => void save()} disabled={busy || errors.length > 0}>
-            {busy ? '保存中…' : '保存设置'}
+          <button type="button" className="button button-primary" onClick={requestSave} disabled={busy || errors.length > 0}>
+            {busy ? '保存中…' : batchDocuments.length > 0 ? `保存并重命名 ${batchDocuments.length} 个文档` : '保存设置'}
           </button>
         </>
       }
@@ -264,7 +327,12 @@ export function SettingsDialog({ snapshot, onClose, onSaved, notify }: SettingsD
 
       <section className="settings-section">
         <div className="settings-section-head">
-          <h3>分类</h3>
+          <div className="settings-section-title">
+            <h3>分类</h3>
+            {batchDocuments.length > 0 ? (
+              <span className="rename-badge">保存时将重命名 {batchDocuments.length} 个文档</span>
+            ) : null}
+          </div>
           <button type="button" className="button button-quiet" onClick={addPrimary} disabled={busy}>
             添加一级分类
           </button>
@@ -588,6 +656,57 @@ export function SettingsDialog({ snapshot, onClose, onSaved, notify }: SettingsD
           </label>
         </div>
       </section>
+
+      {confirmBatchSave ? (
+        <Modal
+          title="保存并重命名文档"
+          subtitle="分类编号会变化，相关文档需要一起改名"
+          onClose={() => setConfirmBatchSave(false)}
+          footer={
+            <>
+              <button type="button" className="button button-quiet" onClick={() => setConfirmBatchSave(false)}>
+                取消
+              </button>
+              <button
+                type="button"
+                className="button button-primary"
+                onClick={() => {
+                  setConfirmBatchSave(false)
+                  void save()
+                }}
+                disabled={busy}
+              >
+                确认保存并改名
+              </button>
+            </>
+          }
+        >
+          <div className="rename-summary">
+            <p>
+              将移动 {Object.keys(mappingChanges).length} 个一级分类，并重命名{' '}
+              <strong>{batchDocuments.length}</strong> 个文档。
+            </p>
+            <ul className="issue-list">
+              {batchDocuments.slice(0, 5).map((document) => (
+                <li key={document.relativePath} className="issue issue-warning">
+                  <span className="issue-mark">·</span>
+                  <code>{document.filename}</code>
+                </li>
+              ))}
+              {batchDocuments.length > 5 ? (
+                <li className="issue issue-warning">
+                  <span className="issue-mark">·</span>还有 {batchDocuments.length - 5} 个文档
+                </li>
+              ) : null}
+            </ul>
+            <p className="issue issue-warning">
+              <span className="issue-mark">·</span>
+              重命名可能使其他文档或外部工具中的链接失效；文件内容不会改变。
+            </p>
+            <p className="plan-hint">保存后可以在主界面点击「撤销」整体恢复分类和文件名。</p>
+          </div>
+        </Modal>
+      ) : null}
 
       {resetConfirm ? (
         <Modal

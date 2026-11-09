@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ISSUE, LeafmarkError } from '@shared/errors'
 import { WorkspaceSession } from '../src/main/session/workspaceSession'
+import { cloneConfig } from '@shared/config/types'
 import { atomicRename } from '../src/main/rename/fsOps'
 import { createTempWorkspace, listFiles, readText, type TempWorkspace } from './helpers'
 
@@ -402,6 +403,113 @@ describe('configuration state', () => {
       categories: Record<string, { name: string }>
     }
     expect(raw.categories['07']?.name).toBe('新分类')
+  })
+})
+
+describe('category reorder with batch rename', () => {
+  const config = {
+    schemaVersion: 1,
+    categories: {
+      '00': { name: 'A', children: { '00': 'a' } },
+      '01': { name: 'B', children: { '00': 'b' } }
+    }
+  }
+
+  it('moves categories and renames their documents together', async () => {
+    const { workspace, session } = await setup(
+      {
+        '000100_[标签]_a.md': 'A 内容',
+        '010100_b.md': 'B 内容'
+      },
+      config
+    )
+    const current = session.snapshot().config
+    const next = cloneConfig(current)
+    next.categories = { '00': current.categories['01']!, '01': current.categories['00']! }
+
+    await session.updateConfig(next, { '00': '01', '01': '00' })
+
+    const files = await listFiles(workspace.root)
+    expect(files).toContain('010100_[标签]_a.md')
+    expect(files).toContain('000100_b.md')
+    expect(files).not.toContain('000100_[标签]_a.md')
+    expect(files).not.toContain('010100_b.md')
+    expect(await readText(workspace.root, '010100_[标签]_a.md')).toBe('A 内容')
+    expect(await readText(workspace.root, '000100_b.md')).toBe('B 内容')
+
+    const snapshot = session.snapshot()
+    expect(snapshot.config.categories['00']?.name).toBe('B')
+    expect(snapshot.config.categories['01']?.name).toBe('A')
+    expect(snapshot.canUndo).toBe(true)
+  })
+
+  it('undoes a category move and restores file names and config', async () => {
+    const { workspace, session } = await setup(
+      {
+        '000100_[标签]_a.md': 'A 内容',
+        '010100_b.md': 'B 内容'
+      },
+      config
+    )
+    const current = session.snapshot().config
+    const next = cloneConfig(current)
+    next.categories = { '00': current.categories['01']!, '01': current.categories['00']! }
+    await session.updateConfig(next, { '00': '01', '01': '00' })
+
+    const result = await session.undoLastRename()
+    expect(result.undone).toBe(true)
+    const files = await listFiles(workspace.root)
+    expect(files).toContain('000100_[标签]_a.md')
+    expect(files).toContain('010100_b.md')
+    expect(await readText(workspace.root, '000100_[标签]_a.md')).toBe('A 内容')
+    expect(session.snapshot().config.categories['00']?.name).toBe('A')
+    expect(session.snapshot().config.categories['01']?.name).toBe('B')
+  })
+
+  it('renames invalid documents by changing only the code prefix', async () => {
+    const { workspace, session } = await setup(
+      {
+        '000100_[]_x.md': 'invalid'
+      },
+      config
+    )
+    const current = session.snapshot().config
+    const next = cloneConfig(current)
+    next.categories = { '00': current.categories['01']!, '01': current.categories['00']! }
+    await session.updateConfig(next, { '00': '01', '01': '00' })
+
+    const files = await listFiles(workspace.root)
+    expect(files).toContain('010100_[]_x.md')
+    expect(await readText(workspace.root, '010100_[]_x.md')).toBe('invalid')
+    expect(session.snapshot().documents[0]?.status).toBe('invalid')
+  })
+
+  it('refuses the whole move when a target name already exists', async () => {
+    const { workspace, session } = await setup(
+      {
+        '000100_[标签]_a.md': 'A',
+        '010100_[标签]_a.md': 'occupied target'
+      },
+      { ...config, scan: { recursive: true, extensions: ['.md'], followSymlinks: false, ignoreGlobs: ['0101*'] } }
+    )
+    const current = session.snapshot().config
+    const next = cloneConfig(current)
+    next.categories = { '00': current.categories['01']!, '01': current.categories['00']! }
+
+    await expect(session.updateConfig(next, { '00': '01', '01': '00' })).rejects.toMatchObject({
+      code: ISSUE.targetCaseConflict
+    })
+    expect(await readText(workspace.root, '000100_[标签]_a.md')).toBe('A')
+    expect(await readText(workspace.root, '010100_[标签]_a.md')).toBe('occupied target')
+  })
+
+  it('does not add an undo entry when no document was renamed', async () => {
+    const { session } = await setup({}, config)
+    const current = session.snapshot().config
+    const next = cloneConfig(current)
+    next.categories = { '00': current.categories['01']!, '01': current.categories['00']! }
+    await session.updateConfig(next, { '00': '01', '01': '00' })
+    expect(session.snapshot().canUndo).toBe(false)
   })
 })
 

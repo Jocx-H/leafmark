@@ -168,9 +168,9 @@ export class AppState {
     return this.requireSession().undoLastRename()
   }
 
-  async updateConfig(config: LeafmarkConfig): Promise<Snapshot> {
+  async updateConfig(config: LeafmarkConfig, mapping?: Record<string, string>): Promise<Snapshot> {
     const session = this.requireSession()
-    return session.updateConfig(config)
+    return session.updateConfig(config, mapping)
   }
 
   async resetConfig(): Promise<Snapshot> {
